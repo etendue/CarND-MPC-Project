@@ -70,7 +70,7 @@ int main() {
 
   // MPC is initialized here!
   MPC mpc;
-
+  const double degree25_radian = 0.436332;
   h.onMessage([&mpc](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
                      uWS::OpCode opCode) {
     // "42" at the start of the message means there's a websocket message event.
@@ -98,8 +98,27 @@ int main() {
           * Both are in between [-1, 1].
           *
           */
+          //get the waypoints
+          Eigen::Map<Eigen::VectorXd> xvals (ptsx.data(),ptsx.size());
+          Eigen::Map<Eigen::VectorXd> yvals (ptsy.data(),ptsy.size());
+          auto coeffs = polyfit(xvals,yvals,3);
+
+          //calculate the cte and epsi
+          double cte = polyeval(coeffs,px)  - y ;
+          // TODO: calculate the orientation error
+          double gradient = coeffs[1] + coeffs[2] * px + coeffs[3]*px*px;
+          double epsi = psi - atan(gradient) ;
+
+          Eigen::VectorXd state(6);
+          state<< px,py,psi,v,cte,epsi;
+
+
           double steer_value;
           double throttle_value;
+
+          auto results= mpc.Solve(state,coeffs);
+          steer_value = results[0]/degree25_radian;
+          throttle_value = results[1];
 
           json msgJson;
           // NOTE: Remember to divide by deg2rad(25) before you send the steering value back.
