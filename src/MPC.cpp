@@ -2,13 +2,16 @@
 #include <cppad/cppad.hpp>
 #include <cppad/ipopt/solve.hpp>
 #include "Eigen-3.3/Eigen/Core"
+#include <fstream>
+#include <sys/stat.h>
+#include <unistd.h>
+#include <fcntl.h>
 
 using CppAD::AD;
 
 // TODO: Set the timestep length and duration
 size_t N = 20;
-double dt = 0.05;
-
+double dt = 0.1;
 // This value assumes the model presented in the classroom is used.
 //
 // It was obtained by measuring the radius formed by running the vehicle in the
@@ -20,7 +23,8 @@ double dt = 0.05;
 //
 // This is the length from front to CoG that has a similar radius.
 
-const double Lf = 2.67;
+const double MPC::Lf = 2.67;
+
 
 // The solver takes all the state variables and actuator
 // variables in a singular vector. Thus, we should to establish
@@ -36,7 +40,7 @@ size_t a_start = delta_start + N - 1;
 
 // NOTE: feel free to play around with this
 // or do something completely different
-double ref_v = 40;
+double ref_v = 45;
 
 class FG_eval {
  public:
@@ -60,7 +64,7 @@ class FG_eval {
     size_t t;
     // The part of the cost based on the reference state.
     for(t=0; t<N; t++) {
-      fg[0] += CppAD::pow(vars[t + cte_start],2);
+      fg[0] += 500*CppAD::pow(vars[t + cte_start],2);
       fg[0] += CppAD::pow(vars[t + epsi_start],2);
       fg[0] += CppAD::pow(vars[t+v_start] - ref_v,2);
     }
@@ -73,8 +77,8 @@ class FG_eval {
 
     // Minimize the value gap between sequential actuations.
     for(t=0; t< N-2;t++) {
-      fg[0] += 500 * CppAD::pow(vars[t + delta_start +1] -vars[t +delta_start],2);
-      fg[0] += 100 * CppAD::pow(vars[t + a_start+1] -vars[t+delta_start],2);
+      fg[0] +=  500*CppAD::pow(vars[t + delta_start +1] -vars[t +delta_start],2);
+      fg[0] +=  CppAD::pow(vars[t + a_start+1] -vars[t+delta_start],2);
     }
 
     //
@@ -111,7 +115,9 @@ class FG_eval {
       AD<double> delta0 = vars[delta_start+t -1];
       AD<double> a0 = vars[a_start +t -1];
 
+      //AD<double> f0 = CppAD::pow(x0,3)*coeffs[2] + CppAD::pow(x0,2)*coeffs[1]+ x0 * coeffs[1] + coeffs[0];
       AD<double> f0 = x0 * coeffs[1] + coeffs[0];
+      //AD<double> psi0_des =CppAD::atan(coeffs[1]+ 2*coeffs[2] * x0 + 3*coeffs[2] * CppAD::pow(x0,2));
       AD<double> psi0_des =CppAD::atan(coeffs[1]);
 
       // Here's `x` to get you started.
@@ -125,10 +131,10 @@ class FG_eval {
       fg[1 + x_start + t] = x1 - (x0 + v0 * CppAD::cos(psi0) * dt);
       fg[1 + y_start + t] = y1 - (y0 + v0 * CppAD::sin(psi0) * dt);
       // adjust the update equation due to simulator coordinate system
-      fg[1 + psi_start + t] = psi1 - (psi0 - v0/Lf *delta0 *dt);
+      fg[1 + psi_start + t] = psi1 - (psi0 + v0/MPC::Lf *delta0 *dt);
       fg[1 + v_start + t] = v1 - (v0 + a0 * dt);
-      fg[1 + cte_start + t] = cte1 - ((f0 - y0) + (v0 * CppAD::sin(epsi0) * dt));
-      fg[1 + epsi_start + t] = epsi1 - ((psi0 - psi0_des) + v0 * delta0 / Lf * dt);
+      fg[1 + cte_start + t] = cte1 - (( f0 -y0) + (v0 * CppAD::sin(epsi0) * dt));
+      fg[1 + epsi_start + t] = epsi1 - ((psi0 - psi0_des) + v0 * delta0 /MPC:: Lf * dt);
     }
   };
 };
@@ -260,5 +266,39 @@ vector<double> MPC::Solve(Eigen::VectorXd state, Eigen::VectorXd coeffs) {
   //
   // {...} is shorthand for creating a vector, so auto x1 = {1.0,2.0}
   // creates a 2 element double vector.
-  return {solution.x[delta_start],solution.x[a_start]};
+  vector<double> ret;
+  ret.push_back(solution.x[delta_start]);
+  ret.push_back(solution.x[a_start]);
+  for(i = 1; i<N; i++)
+  {
+	  ret.push_back(solution.x[x_start+i]);
+  }
+  for(i = 1; i<N; i++)
+  {
+  	  ret.push_back(solution.x[y_start+i]);
+  }
+
+  {
+	  string file ="/tmp/mpc";
+	  int fd;
+	  if( (fd = open(file.c_str(),O_WRONLY | O_NONBLOCK,S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH)) != -1)
+	  {
+			stringstream ss;
+			ss << "x y psi v cte epsi delta a" << endl;
+			Dvector sx = solution.x;
+			for (i = 1; i < N; i++) {
+				ss << sx[x_start + i] << " " << sx[y_start + i] << " "
+						<< sx[psi_start + i] << " " << sx[v_start + i] << " "
+						<< sx[cte_start + i] << " " << sx[epsi_start + i] << " "
+						<< sx[delta_start + i - 1] << " " << sx[a_start + i - 1]
+						<< endl;
+			}
+
+		    write(fd, (void*)ss.str().c_str(), ss.str().size());
+			close(fd);
+	  }
+   }
+
+   return ret;
 }
+
